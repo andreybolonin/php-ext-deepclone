@@ -1,0 +1,100 @@
+--- UnitOfWork.php
++++ UnitOfWork.php
+@@ -894,20 +894,88 @@
+                 default => [],
+             };
+ 
+-            foreach ($entitiesToProcess as $entity) {
+-                // Ignore uninitialized proxy objects
+-                if ($this->isUninitializedObject($entity)) {
+-                    continue;
++            $fields = $this->auditDirtyPlan($class, $entitiesToProcess);
++            $chunks = $fields === null ? [$entitiesToProcess] : array_chunk($entitiesToProcess, 256);
++            foreach ($chunks as $chunk) {
++                if ($fields !== null && $GLOBALS['audit_dirty_mode'] === 'native-resume') {
++                    // This benchmark fixture uses plain fields, built-in types and no callbacks.
++                    // Processing a candidate cannot mutate another object in the chunk.
++                    $candidates = deepclone_dirty_candidates($class->name, $fields, $chunk, $this->originalEntityData);
++                    $GLOBALS['audit_skipped'] += count($chunk) - count($candidates);
++                    $chunk = $candidates;
++                } else {
++                    if ($fields !== null && $this->auditUnchangedChunk($class, $fields, $chunk)) {
++                        $GLOBALS['audit_skipped'] += count($chunk);
++                        continue;
++                    }
++                    $fields = null;
+                 }
+-
+-                // Only MANAGED entities that are NOT SCHEDULED FOR INSERTION OR DELETION are processed here.
+-                $oid = spl_object_id($entity);
++                foreach ($chunk as $entity) {
++                    // Ignore uninitialized proxy objects
++                    if ($this->isUninitializedObject($entity)) {
++                        continue;
++                    }
+ 
+-                if (! isset($this->entityInsertions[$oid]) && ! isset($this->entityDeletions[$oid]) && isset($this->entityStates[$oid])) {
+-                    $this->computeChangeSet($class, $entity);
++                    // Only MANAGED entities that are NOT SCHEDULED FOR INSERTION OR DELETION are processed here.
++                    $oid = spl_object_id($entity);
++
++                    if (! isset($this->entityInsertions[$oid]) && ! isset($this->entityDeletions[$oid]) && isset($this->entityStates[$oid])) {
++                        $this->computeChangeSet($class, $entity);
++                    }
++                }
++            }
++        }
++    }
++
++    /**
++     * Restrict the experiment to the stock public-field accessor configuration.
++     */
++    private function auditDirtyPlan(ClassMetadata $class, array $entities): ?array
++    {
++        if (count($entities) < 64 || !$class->isChangeTrackingDeferredImplicit() || !$class->isIdentifierNatural()
++            || $class->associationMappings !== [] || $class->embeddedClasses !== [] || $class->versionField !== null
++            || !$class->isInheritanceTypeNone() || $class->reflClass?->getParentClass() !== false
++            || !$this->em->getConfiguration()->isNativeLazyObjectsEnabled()
++            || $this->partialObjectLoadedFields !== [] || $this->entityInsertions !== [] || $this->entityDeletions !== []
++            || ($this->listenersInvoker->getSubscribedSystems($class, Events::preFlush) & ~ListenersInvoker::INVOKE_MANAGER) !== 0
++        ) {
++            return null;
++        }
++
++        foreach ($class->propertyAccessors as $field => $accessor) {
++            $property = $accessor->getUnderlyingReflector();
++            if (!isset($class->fieldMappings[$field]) || $class->fieldMappings[$field]->enumType !== null
++                || !$property->isPublic() || $property->hasHooks() || $property->isReadOnly() || $property->getName() !== $field
++            ) {
++                return null;
++            }
++        }
++
++        return array_keys($class->fieldMappings);
++    }
++
++    private function auditUnchangedChunk(ClassMetadata $class, array $fields, array $entities): bool
++    {
++        if ($GLOBALS['audit_dirty_mode'] === 'native') {
++            return deepclone_dirty_candidates($class->name, $fields, $entities, $this->originalEntityData) === [];
++        }
++
++        foreach ($entities as $entity) {
++            $snapshot = $this->originalEntityData[spl_object_id($entity)] ?? null;
++            if ($snapshot === null || $entity::class !== $class->name
++                || $class->reflClass->isUninitializedLazyObject($entity)
++            ) {
++                return false;
++            }
++            $data = (array) $entity;
++            foreach ($fields as $field) {
++                if (!isset($snapshot[$field], $data[$field]) || $snapshot[$field] !== $data[$field]) {
++                    return false;
+                 }
+             }
+         }
++
++        return true;
+     }
+ 
+     /**

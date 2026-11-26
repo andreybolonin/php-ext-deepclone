@@ -1,0 +1,183 @@
+{
+    "mode": "php",
+    "checks": [
+        "updated row identities",
+        "filter counts",
+        "equivalent converted date",
+        "entity preFlush"
+    ],
+    "engine": "doctrine",
+    "orm": "3.8.0",
+    "orm_reference": "243f25157055d553da52d7c4bbe73c4623dadc61",
+    "php": "8.5.13",
+    "dbal": "4.6.0",
+    "var_exporter": "v8.1.10",
+    "postgresql": "18.7 (Homebrew)",
+    "fsync": "on",
+    "synchronous_commit": "on",
+    "os": "Darwin",
+    "arch": "arm64",
+    "deepclone": "0.8.13",
+    "opcache_cli": "1",
+    "jit": "disable",
+    "warmup": 2,
+    "rounds": 7,
+    "measurements": {
+        "empty": {
+            "10000": [
+                {
+                    "ms": 2.480875,
+                    "peak_heap_delta_bytes": 332224,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 2.701334,
+                    "peak_heap_delta_bytes": 332224,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 2.714458,
+                    "peak_heap_delta_bytes": 332224,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 2.704916,
+                    "peak_heap_delta_bytes": 332224,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 2.740958,
+                    "peak_heap_delta_bytes": 332224,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 2.727708,
+                    "peak_heap_delta_bytes": 332224,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 2.780958,
+                    "peak_heap_delta_bytes": 332224,
+                    "skipped": 10000
+                }
+            ]
+        },
+        "first-1": {
+            "10000": [
+                {
+                    "ms": 27.5455,
+                    "peak_heap_delta_bytes": 407704,
+                    "skipped": 0
+                },
+                {
+                    "ms": 28.984084,
+                    "peak_heap_delta_bytes": 407704,
+                    "skipped": 0
+                },
+                {
+                    "ms": 27.001375,
+                    "peak_heap_delta_bytes": 407704,
+                    "skipped": 0
+                },
+                {
+                    "ms": 28.044041,
+                    "peak_heap_delta_bytes": 407704,
+                    "skipped": 0
+                },
+                {
+                    "ms": 27.315292,
+                    "peak_heap_delta_bytes": 407704,
+                    "skipped": 0
+                },
+                {
+                    "ms": 28.450084,
+                    "peak_heap_delta_bytes": 407704,
+                    "skipped": 0
+                },
+                {
+                    "ms": 27.89225,
+                    "peak_heap_delta_bytes": 407704,
+                    "skipped": 0
+                }
+            ]
+        },
+        "last-1": {
+            "10000": [
+                {
+                    "ms": 12.886334,
+                    "peak_heap_delta_bytes": 407328,
+                    "skipped": 9728
+                },
+                {
+                    "ms": 13.317792,
+                    "peak_heap_delta_bytes": 407328,
+                    "skipped": 9728
+                },
+                {
+                    "ms": 12.359041,
+                    "peak_heap_delta_bytes": 407328,
+                    "skipped": 9728
+                },
+                {
+                    "ms": 12.844916,
+                    "peak_heap_delta_bytes": 407328,
+                    "skipped": 9728
+                },
+                {
+                    "ms": 11.290458,
+                    "peak_heap_delta_bytes": 407328,
+                    "skipped": 9728
+                },
+                {
+                    "ms": 13.17925,
+                    "peak_heap_delta_bytes": 407328,
+                    "skipped": 9728
+                },
+                {
+                    "ms": 12.214917,
+                    "peak_heap_delta_bytes": 407328,
+                    "skipped": 9728
+                }
+            ]
+        },
+        "all-100": {
+            "10000": [
+                {
+                    "ms": 525.194875,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 521.521833,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 523.630833,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 522.765875,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 518.604417,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 517.715042,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 526.620167,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                }
+            ]
+        }
+    }
+}

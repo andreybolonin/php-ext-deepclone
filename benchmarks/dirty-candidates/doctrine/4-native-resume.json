@@ -1,0 +1,183 @@
+{
+    "mode": "native-resume",
+    "checks": [
+        "updated row identities",
+        "filter counts",
+        "equivalent converted date",
+        "entity preFlush"
+    ],
+    "engine": "doctrine",
+    "orm": "3.8.0",
+    "orm_reference": "243f25157055d553da52d7c4bbe73c4623dadc61",
+    "php": "8.5.13",
+    "dbal": "4.6.0",
+    "var_exporter": "v8.1.10",
+    "postgresql": "18.7 (Homebrew)",
+    "fsync": "on",
+    "synchronous_commit": "on",
+    "os": "Darwin",
+    "arch": "arm64",
+    "deepclone": "0.8.13",
+    "opcache_cli": "1",
+    "jit": "disable",
+    "warmup": 2,
+    "rounds": 7,
+    "measurements": {
+        "empty": {
+            "10000": [
+                {
+                    "ms": 0.573,
+                    "peak_heap_delta_bytes": 331928,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 1.258917,
+                    "peak_heap_delta_bytes": 331928,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 2.111416,
+                    "peak_heap_delta_bytes": 331928,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 0.962208,
+                    "peak_heap_delta_bytes": 331928,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 0.885042,
+                    "peak_heap_delta_bytes": 331928,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 0.632125,
+                    "peak_heap_delta_bytes": 331928,
+                    "skipped": 10000
+                },
+                {
+                    "ms": 0.595833,
+                    "peak_heap_delta_bytes": 331928,
+                    "skipped": 10000
+                }
+            ]
+        },
+        "first-1": {
+            "10000": [
+                {
+                    "ms": 9.432667,
+                    "peak_heap_delta_bytes": 410184,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.963167,
+                    "peak_heap_delta_bytes": 410184,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 9.836417,
+                    "peak_heap_delta_bytes": 410184,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.970583,
+                    "peak_heap_delta_bytes": 410184,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.257291,
+                    "peak_heap_delta_bytes": 410184,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 11.11575,
+                    "peak_heap_delta_bytes": 410184,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.305792,
+                    "peak_heap_delta_bytes": 410184,
+                    "skipped": 9900
+                }
+            ]
+        },
+        "last-1": {
+            "10000": [
+                {
+                    "ms": 10.556375,
+                    "peak_heap_delta_bytes": 407920,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.350667,
+                    "peak_heap_delta_bytes": 407920,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.665208,
+                    "peak_heap_delta_bytes": 407920,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 11.06075,
+                    "peak_heap_delta_bytes": 407920,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.589708,
+                    "peak_heap_delta_bytes": 407920,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.285792,
+                    "peak_heap_delta_bytes": 407920,
+                    "skipped": 9900
+                },
+                {
+                    "ms": 10.995875,
+                    "peak_heap_delta_bytes": 407920,
+                    "skipped": 9900
+                }
+            ]
+        },
+        "all-100": {
+            "10000": [
+                {
+                    "ms": 516.837167,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 519.762666,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 521.134833,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 518.971834,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 541.211542,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 517.101417,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                },
+                {
+                    "ms": 517.760625,
+                    "peak_heap_delta_bytes": 8152928,
+                    "skipped": 0
+                }
+            ]
+        }
+    }
+}

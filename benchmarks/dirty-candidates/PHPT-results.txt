@@ -1,0 +1,12 @@
+PHP 8.4
+Tests skipped   :    13 (  9.4%) --------
+Tests failed    :     0 (  0.0%) (  0.0%)
+Tests passed    :   126 ( 90.6%) (100.0%)
+PHP 8.5
+Tests skipped   :     2 (  1.4%) --------
+Tests failed    :     0 (  0.0%) (  0.0%)
+Tests passed    :   137 ( 98.6%) (100.0%)
+PHP 8.6
+Tests skipped   :     2 (  1.4%) --------
+Tests failed    :     0 (  0.0%) (  0.0%)
+Tests passed    :   137 ( 98.6%) (100.0%)

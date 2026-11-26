@@ -1,0 +1,77 @@
+{
+    "engine": "doctrine",
+    "mode": "stock",
+    "orm": "3.8.0",
+    "orm_reference": "243f25157055d553da52d7c4bbe73c4623dadc61",
+    "php": "8.5.13",
+    "dbal": "4.6.0",
+    "var_exporter": "v8.1.10",
+    "postgresql": "18.7 (Homebrew)",
+    "fsync": "on",
+    "synchronous_commit": "on",
+    "os": "Darwin",
+    "arch": "arm64",
+    "deepclone": "0.8.13",
+    "opcache_cli": "1",
+    "jit": "disable",
+    "warmup": 4,
+    "rounds": 13,
+    "measurements": {
+        "noop_flush": {
+            "10000": [
+                {
+                    "ms": 18.669,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 19.023042,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 19.15875,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 18.674125,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 18.98175,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 18.461792,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 18.847417,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 19.108583,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 18.637167,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 19.228708,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 18.380959,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 18.758,
+                    "peak_heap_delta_bytes": 752
+                },
+                {
+                    "ms": 19.260833,
+                    "peak_heap_delta_bytes": 752
+                }
+            ]
+        }
+    }
+}

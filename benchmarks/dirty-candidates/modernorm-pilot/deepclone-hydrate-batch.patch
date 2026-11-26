@@ -1,0 +1,517 @@
+diff --git a/README.md b/README.md
+index 6035b29..4bfbced 100644
+--- a/README.md
++++ b/README.md
+@@ -62,6 +62,7 @@ deepclone_hydrate($user, ['name' => 'Bob']);
+ function deepclone_to_array(mixed $value, ?array $allowed_classes = null, bool $allow_named_closures = false): array;
+ function deepclone_from_array(array $data, ?array $allowed_classes = null, bool $allow_named_closures = false): mixed;
+ function deepclone_hydrate(object|string $object_or_class, array $vars = [], int $flags = 0): object;
++function deepclone_hydrate_batch(string $class, array $properties, array $rows): array;
+ ```
+ 
+ `$allowed_classes` works like the `allowed_classes` option of `unserialize()`,
+@@ -75,6 +76,26 @@ Closures declared in constant expressions don't need it, eg
+ `#[When(self::isStrict(...))]`: they're encoded as a reference to their
+ declaration site, which resolves only to what the class itself declares.
+ 
++## Batch object hydration
++
++`deepclone_hydrate_batch()` creates a list of new objects of one userland class without
++running its constructor. It resolves the declared properties once per call. The
++values in each positional row correspond to the property list in order.
++
++```php
++$users = deepclone_hydrate_batch(User::class, ['id', 'name'], [
++    [42, 'Alice'],
++    [43, 'Bob'],
++]);
++```
++
++The property keys and writes use the default `deepclone_hydrate()` semantics for
++supported declared instance properties. Duplicate targets, dynamic properties,
++property hooks and classes requiring special object creation are rejected.
++Every row must be a list matching the property count. If a row is invalid or
++a write fails, the function throws without returning a partial list. PHP
++cleanup can still run destructors. Use bounded chunks for large inputs.
++
+ ## Lazy hydration
+ 
+ Resolving closures is where hydration time goes. That's why, on PHP 8.4+,
+diff --git a/deepclone.c b/deepclone.c
+index d59d8a9..d474005 100644
+--- a/deepclone.c
++++ b/deepclone.c
+@@ -6857,6 +6857,75 @@ cleanup:
+ 
+ /* ── deepclone_hydrate() — instantiate/hydrate from a flat mangled-key array ── */
+ 
++/* Resolve the property key syntax used by the scalar and batch APIs. */
++static zend_always_inline zend_class_entry *dc_resolve_hydration_key(zend_class_entry *obj_ce,
++	zend_string *prop_key, zend_string **name_out, bool *is_mangled, const char *argument)
++{
++	const char *key = ZSTR_VAL(prop_key);
++	size_t key_len = ZSTR_LEN(prop_key);
++	zend_class_entry *scope_ce = obj_ce;
++	zend_string *real_name = prop_key;
++	*is_mangled = false;
++
++	if (key_len > 0 && key[0] == '\0') {
++		*is_mangled = true;
++		const char *sep = NULL;
++
++		/* "\0ClassName\0propName": the scope must be obj_ce or a parent,
++		 * no autoloader is triggered. The name of an anonymous class
++		 * contains a NUL, so look for these names before cutting the key
++		 * at its second NUL. */
++		for (zend_class_entry *p = obj_ce; p; p = p->parent) {
++			size_t class_len = ZSTR_LEN(p->name);
++			if (key_len > class_len + 1 && key[class_len + 1] == '\0'
++			 && !memcmp(key + 1, ZSTR_VAL(p->name), class_len)) {
++				scope_ce = p;
++				sep = key + class_len + 1;
++				break;
++			}
++		}
++		if (!sep) {
++			sep = memchr(key + 1, '\0', key_len - 1);
++			if (UNEXPECTED(!sep || sep == key + 1)) {
++				zend_value_error("%s contains an invalid mangled key", argument);
++				return NULL;
++			}
++			/* "\0*\0propName" keeps scope_ce = obj_ce: protected properties
++			 * are inherited under their bare name */
++			if (sep != key + 2 || key[1] != '*') {
++				scope_ce = NULL;
++			}
++		}
++		const char *name = sep + 1;
++		size_t name_len = key + key_len - name;
++
++		/* Reject embedded NUL in the property name portion */
++		if (UNEXPECTED(memchr(name, '\0', name_len) != NULL)) {
++			zend_value_error("%s contains an invalid mangled key", argument);
++			return NULL;
++		}
++		if (UNEXPECTED(!scope_ce)) {
++			zend_value_error("%s key scope \"%.*s\" is not a parent of \"%s\"",
++				argument, (int) (sep - key - 1), key + 1, ZSTR_VAL(obj_ce->name));
++			return NULL;
++		}
++
++		/* A mangled key targets a declared property, never a dynamic one,
++		 * so a stdClass object has none. The name is taken from the
++		 * properties of the scope, which spares creating a string. */
++		zval *declared = zend_hash_str_find(&scope_ce->properties_info, name, name_len);
++		if (UNEXPECTED(!declared)) {
++			zend_value_error("%s key scope \"%s\" does not declare a \"%.*s\" property",
++				argument, ZSTR_VAL(scope_ce->name), (int) name_len, name);
++			return NULL;
++		}
++		real_name = ((Bucket *) declared)->key;
++	}
++
++	*name_out = real_name;
++	return scope_ce;
++}
++
+ PHP_FUNCTION(deepclone_hydrate)
+ {
+ 	zend_object *obj_arg = NULL;
+@@ -7038,76 +7107,14 @@ PHP_FUNCTION(deepclone_hydrate)
+ 		const char *key = ZSTR_VAL(prop_key);
+ 		size_t key_len = ZSTR_LEN(prop_key);
+ 
+-		/* Resolve (scope_ce, real_name) from the mangled key shape.
+-		 * is_mangled is set when the key started with NUL — if the resolved
+-		 * property_info lookup then misses, we reject the key rather than
+-		 * silently creating a dynamic property, since a mangled-form key
+-		 * specifically targets a declared protected / private slot. */
+-		zend_class_entry *scope_ce = obj_ce;
+-		zend_string *real_name = prop_key;
+-		bool is_mangled = false;
+-
+-		if (key_len > 0 && key[0] == '\0') {
+-			is_mangled = true;
+-			const char *sep = NULL;
+-
+-			/* "\0ClassName\0propName": the scope must be obj_ce or a parent,
+-			 * no autoloader is triggered. The name of an anonymous class
+-			 * contains a NUL, so look for these names before cutting the key
+-			 * at its second NUL. */
+-			for (zend_class_entry *p = obj_ce; p; p = p->parent) {
+-				size_t class_len = ZSTR_LEN(p->name);
+-				if (key_len > class_len + 1 && key[class_len + 1] == '\0'
+-				 && !memcmp(key + 1, ZSTR_VAL(p->name), class_len)) {
+-					scope_ce = p;
+-					sep = key + class_len + 1;
+-					break;
+-				}
+-			}
+-			if (!sep) {
+-				sep = memchr(key + 1, '\0', key_len - 1);
+-				if (UNEXPECTED(!sep || sep == key + 1)) {
+-					zend_value_error("deepclone_hydrate(): Argument #2 ($vars) contains an invalid mangled key");
+-					if (prop_key_owned) zend_string_release(prop_key);
+-					zval_ptr_dtor(&obj_zval);
+-					RETURN_THROWS();
+-				}
+-				/* "\0*\0propName" keeps scope_ce = obj_ce: protected properties
+-				 * are inherited under their bare name */
+-				if (sep != key + 2 || key[1] != '*') {
+-					scope_ce = NULL;
+-				}
+-			}
+-			const char *name = sep + 1;
+-			size_t name_len = key + key_len - name;
+-
+-			/* Reject embedded NUL in the property name portion */
+-			if (UNEXPECTED(memchr(name, '\0', name_len) != NULL)) {
+-				zend_value_error("deepclone_hydrate(): Argument #2 ($vars) contains an invalid mangled key");
+-				if (prop_key_owned) zend_string_release(prop_key);
+-				zval_ptr_dtor(&obj_zval);
+-				RETURN_THROWS();
+-			}
+-			if (UNEXPECTED(!scope_ce)) {
+-				zend_value_error("deepclone_hydrate(): Argument #2 ($vars) key scope \"%.*s\" is not a parent of \"%s\"",
+-					(int) (sep - key - 1), key + 1, ZSTR_VAL(obj_ce->name));
+-				if (prop_key_owned) zend_string_release(prop_key);
+-				zval_ptr_dtor(&obj_zval);
+-				RETURN_THROWS();
+-			}
+-
+-			/* A mangled key targets a declared property, never a dynamic one,
+-			 * so a stdClass object has none. The name is taken from the
+-			 * properties of the scope, which spares creating a string. */
+-			zval *declared = zend_hash_str_find(&scope_ce->properties_info, name, name_len);
+-			if (UNEXPECTED(!declared)) {
+-				zend_value_error("deepclone_hydrate(): Argument #2 ($vars) key scope \"%s\" does not declare a \"%.*s\" property",
+-					ZSTR_VAL(scope_ce->name), (int) name_len, name);
+-				if (prop_key_owned) zend_string_release(prop_key);
+-				zval_ptr_dtor(&obj_zval);
+-				RETURN_THROWS();
+-			}
+-			real_name = ((Bucket *) declared)->key;
++		zend_string *real_name;
++		bool is_mangled;
++		zend_class_entry *scope_ce = dc_resolve_hydration_key(obj_ce, prop_key, &real_name,
++			&is_mangled, "deepclone_hydrate(): Argument #2 ($vars)");
++		if (UNEXPECTED(!scope_ce)) {
++			if (prop_key_owned) zend_string_release(prop_key);
++			zval_ptr_dtor(&obj_zval);
++			RETURN_THROWS();
+ 		}
+ 
+ 		/* Default: the input's PHP & references are dropped (dereferenced) on
+@@ -7172,6 +7179,134 @@ PHP_FUNCTION(deepclone_hydrate)
+ 	ZVAL_COPY_VALUE(return_value, &obj_zval);
+ }
+ 
++typedef struct {
++	zend_property_info *info;
++	zend_string *name;
++} dc_batch_property;
++
++PHP_FUNCTION(deepclone_hydrate_batch)
++{
++	zend_string *class_name;
++	HashTable *properties, *rows;
++	ZEND_PARSE_PARAMETERS_START(3, 3)
++		Z_PARAM_STR(class_name)
++		Z_PARAM_ARRAY_HT(properties)
++		Z_PARAM_ARRAY_HT(rows)
++	ZEND_PARSE_PARAMETERS_END();
++
++	if (UNEXPECTED(!zend_array_is_list(properties) || !zend_array_is_list(rows))) {
++		zend_value_error("deepclone_hydrate_batch(): $properties and $rows must be lists");
++		RETURN_THROWS();
++	}
++
++	zend_class_entry *ce = zend_lookup_class(class_name);
++	if (UNEXPECTED(!ce)) {
++		if (!EG(exception)) {
++			zend_throw_exception_ex(dc_ce_class_not_found_exception, 0,
++				"Class \"%s\" not found.", ZSTR_VAL(class_name));
++		}
++		RETURN_THROWS();
++	}
++	if (UNEXPECTED(ce->type != ZEND_USER_CLASS || (ce->ce_flags & ZEND_ACC_UNINSTANTIABLE)
++		|| ce->create_object || dc_refuses_serialization(ce) || dc_needs_internal_state(ce))) {
++		zend_throw_exception_ex(dc_ce_not_instantiable_exception, 0,
++			"Type \"%s\" is not supported for batch hydration.", ZSTR_VAL(ce->name));
++		RETURN_THROWS();
++	}
++
++	uint32_t property_count = zend_hash_num_elements(properties);
++	dc_batch_property *plan = property_count
++		? safe_emalloc(property_count, sizeof(dc_batch_property), 0) : NULL;
++	uint32_t planned = 0;
++	HashTable seen;
++	zend_hash_init(&seen, property_count, NULL, NULL, 0);
++	zval *key;
++	ZEND_HASH_FOREACH_VAL(properties, key) {
++		ZVAL_DEREF(key);
++		if (UNEXPECTED(Z_TYPE_P(key) != IS_STRING)) {
++			zend_value_error("deepclone_hydrate_batch(): $properties must contain only strings");
++			goto invalid_plan;
++		}
++		zend_string *name;
++		bool mangled;
++		zend_class_entry *scope = dc_resolve_hydration_key(ce, Z_STR_P(key), &name,
++			&mangled, "deepclone_hydrate_batch(): Argument #2 ($properties)");
++		if (UNEXPECTED(!scope)) {
++			goto invalid_plan;
++		}
++		zend_property_info *info = zend_hash_find_ptr(&scope->properties_info, name);
++		if (UNEXPECTED(!dc_is_backed_declared_property(info) || DC_PROP_HAS_HOOKS(info))) {
++			zend_value_error("deepclone_hydrate_batch(): $properties must target declared, backed instance properties without hooks");
++			goto invalid_plan;
++		}
++		if (UNEXPECTED(!zend_hash_index_add_empty_element(&seen, info->offset))) {
++			zend_value_error("deepclone_hydrate_batch(): $properties contains a duplicate property target");
++			goto invalid_plan;
++		}
++		plan[planned++] = (dc_batch_property) {info, zend_string_copy(name)};
++	} ZEND_HASH_FOREACH_END();
++	zend_hash_destroy(&seen);
++
++	zval result;
++	array_init_size(&result, zend_hash_num_elements(rows));
++	zval *row;
++	ZEND_HASH_FOREACH_VAL(rows, row) {
++		ZVAL_DEREF(row);
++		if (UNEXPECTED(Z_TYPE_P(row) != IS_ARRAY || !zend_array_is_list(Z_ARRVAL_P(row))
++			|| zend_hash_num_elements(Z_ARRVAL_P(row)) != property_count)) {
++			zend_value_error("deepclone_hydrate_batch(): each row must be a list matching $properties");
++			goto invalid_rows;
++		}
++		/* Keep the row alive if a coercion changes a referenced input entry. */
++		zval input;
++		ZVAL_COPY(&input, row);
++		zval object;
++		ZVAL_UNDEF(&object);
++		if (UNEXPECTED(object_init_ex(&object, ce) != SUCCESS || EG(exception))) {
++			zval_ptr_dtor(&input);
++			zval_ptr_dtor(&object);
++			goto invalid_rows;
++		}
++		uint32_t column = 0;
++		zval *item;
++		ZEND_HASH_FOREACH_VAL(Z_ARRVAL(input), item) {
++			zval value;
++			ZVAL_COPY_DEREF(&value, item);
++			dc_batch_property *property = &plan[column++];
++			bool ok = dc_write_backed_property(Z_OBJ(object), property->info, property->name, &value, 0);
++			zval_ptr_dtor(&value);
++			if (UNEXPECTED(!ok || EG(exception))) {
++				zval_ptr_dtor(&input);
++				zval_ptr_dtor(&object);
++				goto invalid_rows;
++			}
++		} ZEND_HASH_FOREACH_END();
++		zval_ptr_dtor(&input);
++		if (UNEXPECTED(EG(exception))) {
++			zval_ptr_dtor(&object);
++			goto invalid_rows;
++		}
++		add_next_index_zval(&result, &object);
++	} ZEND_HASH_FOREACH_END();
++	for (uint32_t i = 0; i < planned; i++) {
++		zend_string_release(plan[i].name);
++	}
++	if (plan) efree(plan);
++	RETURN_COPY_VALUE(&result);
++
++invalid_plan:
++	zend_hash_destroy(&seen);
++	goto fail;
++invalid_rows:
++	zval_ptr_dtor(&result);
++fail:
++	for (uint32_t i = 0; i < planned; i++) {
++		zend_string_release(plan[i].name);
++	}
++	if (plan) efree(plan);
++	RETURN_THROWS();
++}
++
+ /* ── Module boilerplate ─────────────────────────────────────── */
+ 
+ /* Function arginfo and ext_functions[] are generated from deepclone.stub.php
+diff --git a/deepclone.stub.php b/deepclone.stub.php
+index d252864..944c61e 100644
+--- a/deepclone.stub.php
++++ b/deepclone.stub.php
+@@ -52,4 +52,6 @@ namespace {
+     function deepclone_from_array(array $data, ?array $allowed_classes = null, bool $allow_named_closures = false): mixed {}
+ 
+     function deepclone_hydrate(object|string $object_or_class, array $vars = [], int $flags = 0): object {}
++
++    function deepclone_hydrate_batch(string $class, array $properties, array $rows): array {}
+ }
+diff --git a/deepclone_arginfo.h b/deepclone_arginfo.h
+index 7b88908..08763f6 100644
+--- a/deepclone_arginfo.h
++++ b/deepclone_arginfo.h
+@@ -1,5 +1,5 @@
+-/* This is a generated file, edit deepclone.stub.php instead.
+- * Stub hash: ec11b6f3b9b69f77cbddece18176eab2ffd1007a */
++/* This is a generated file, edit the .stub.php file instead.
++ * Stub hash: 4ed2329bf35428279036fe64dccd533670363b80 */
+ 
+ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_deepclone_to_array, 0, 1, IS_ARRAY, 0)
+ 	ZEND_ARG_TYPE_INFO(0, value, IS_MIXED, 0)
+@@ -19,6 +19,12 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_deepclone_hydrate, 0, 1, IS_OBJE
+ 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, flags, IS_LONG, 0, "0")
+ ZEND_END_ARG_INFO()
+ 
++ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_deepclone_hydrate_batch, 0, 3, IS_ARRAY, 0)
++	ZEND_ARG_TYPE_INFO(0, class, IS_STRING, 0)
++	ZEND_ARG_TYPE_INFO(0, properties, IS_ARRAY, 0)
++	ZEND_ARG_TYPE_INFO(0, rows, IS_ARRAY, 0)
++ZEND_END_ARG_INFO()
++
+ ZEND_BEGIN_ARG_INFO_EX(arginfo_class_DeepClone_HydrationContext___construct, 0, 0, 0)
+ ZEND_END_ARG_INFO()
+ 
+@@ -29,6 +35,7 @@ ZEND_END_ARG_INFO()
+ ZEND_FUNCTION(deepclone_to_array);
+ ZEND_FUNCTION(deepclone_from_array);
+ ZEND_FUNCTION(deepclone_hydrate);
++ZEND_FUNCTION(deepclone_hydrate_batch);
+ ZEND_METHOD(DeepClone_HydrationContext, __construct);
+ ZEND_METHOD(DeepClone_HydrationContext, hydrate);
+ 
+@@ -36,6 +43,7 @@ static const zend_function_entry ext_functions[] = {
+ 	ZEND_FE(deepclone_to_array, arginfo_deepclone_to_array)
+ 	ZEND_FE(deepclone_from_array, arginfo_deepclone_from_array)
+ 	ZEND_FE(deepclone_hydrate, arginfo_deepclone_hydrate)
++	ZEND_FE(deepclone_hydrate_batch, arginfo_deepclone_hydrate_batch)
+ 	ZEND_FE_END
+ };
+ 
+diff --git a/tests/hydrate_batch.phpt b/tests/hydrate_batch.phpt
+new file mode 100644
+index 0000000..243361a
+--- /dev/null
++++ b/tests/hydrate_batch.phpt
+@@ -0,0 +1,57 @@
++--TEST--
++deepclone_hydrate_batch() hydrates homogeneous objects with scalar hydration semantics
++--EXTENSIONS--
++deepclone
++--FILE--
++<?php
++class BatchParent
++{
++    private int $hidden;
++    protected ?string $label = 'default';
++}
++
++final class BatchEntity extends BatchParent
++{
++    public readonly int $id;
++    public array $payload;
++    public DateTimeImmutable $createdAt;
++    public int $uninitialized;
++    public string $omitted = 'default';
++
++    public function __construct()
++    {
++        throw new LogicException('Constructor must not run');
++    }
++}
++
++$date = new DateTimeImmutable('2026-11-26');
++$id = 42;
++$keys = ['id', "\0BatchParent\0hidden", "\0*\0label", 'payload', 'createdAt', 'uninitialized'];
++$rows = [
++    [&$id, 10, null, ['colour' => 'blue'], $date, null],
++    [43, 20, 'second', ['pages' => 96], $date, null],
++];
++$expected = array_map(
++    static fn (array $row): object => deepclone_hydrate(BatchEntity::class, array_combine($keys, $row)),
++    $rows,
++);
++$actual = deepclone_hydrate_batch(BatchEntity::class, $keys, $rows);
++$id = 99;
++var_dump($actual == $expected);
++var_dump($actual[0]->id, $actual[1]->id);
++var_dump($actual[0]->createdAt === $date);
++var_dump((new ReflectionProperty(BatchEntity::class, 'uninitialized'))->isInitialized($actual[0]));
++var_dump($actual[0]->omitted);
++var_dump(deepclone_hydrate_batch(BatchEntity::class, ['id'], []));
++var_dump(count(deepclone_hydrate_batch(BatchEntity::class, [], [[], []])));
++?>
++--EXPECT--
++bool(true)
++int(42)
++int(43)
++bool(true)
++bool(false)
++string(7) "default"
++array(0) {
++}
++int(2)
+diff --git a/tests/hydrate_batch_errors.phpt b/tests/hydrate_batch_errors.phpt
+new file mode 100644
+index 0000000..45f0781
+--- /dev/null
++++ b/tests/hydrate_batch_errors.phpt
+@@ -0,0 +1,57 @@
++--TEST--
++deepclone_hydrate_batch() rejects unsupported layouts and invalid rows
++--EXTENSIONS--
++deepclone
++--FILE--
++<?php
++class BatchErrors
++{
++    public int $id;
++    protected int $protected = 0;
++    public static int $static;
++    public static int $destroyed = 0;
++
++    public function __destruct()
++    {
++        if (isset($this->id)) {
++            ++self::$destroyed;
++        }
++    }
++}
++
++function verifyError(string $expected, callable $callback): void
++{
++    try {
++        $callback();
++        echo "missing exception\n";
++    } catch (Throwable $error) {
++        var_dump($error::class === $expected);
++    }
++}
++
++verifyError(DeepClone\ClassNotFoundException::class, fn () => deepclone_hydrate_batch('MissingBatchClass', [], []));
++verifyError(DeepClone\NotInstantiableException::class, fn () => deepclone_hydrate_batch(stdClass::class, [], []));
++verifyError(ValueError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, [1 => 'id'], [[1]]));
++verifyError(ValueError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, ['id'], [1 => [1]]));
++verifyError(ValueError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, ['id'], [['id' => 1]]));
++verifyError(ValueError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, ['id'], [[1, 2]]));
++verifyError(ValueError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, [1], []));
++verifyError(ValueError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, ['static'], []));
++verifyError(ValueError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, ['missing'], []));
++verifyError(ValueError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, ['protected', "\0*\0protected"], []));
++verifyError(TypeError::class, fn () => deepclone_hydrate_batch(BatchErrors::class, ['id'], [[1], [new stdClass()]]));
++var_dump(BatchErrors::$destroyed);
++?>
++--EXPECT--
++bool(true)
++bool(true)
++bool(true)
++bool(true)
++bool(true)
++bool(true)
++bool(true)
++bool(true)
++bool(true)
++bool(true)
++bool(true)
++int(1)
